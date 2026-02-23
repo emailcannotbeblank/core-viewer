@@ -1,0 +1,5 @@
+frontend/code-viewer/node_modules/
+frontend/code-viewer/dist/
+backend/__pycache__/
+*.pyc
+.env

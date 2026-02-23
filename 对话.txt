@@ -1,0 +1,75 @@
+写一个sh脚本。统计一个函数，每个语句的调用次数。
+输入：一个函数名，例如follow_page_mask；调用栈，例如follow_page。
+实现方法：
+使用perf probe -L ，获取指定函数代码；
+对于每一个可以插入探针的行，使用perf probe -a添加探针（注意添加探针可能失败，应该考虑这种情况）；
+使用perf record -g抓取数据；
+对于每一个数据，检查调用栈，只关注调用栈中有指定调用栈函数的记录；
+统计每一行，执行了多少次。
+
+
+follow_page_mask > follow_p4d_mask > follow_pud_mask
+
+sudo ./trace_line_hits.sh follow_pud_mask "follow_page_mask follow_p4d_mask" 1
+sudo ./trace_line_hits.sh follow_pud_mask "*" 1
+
+
+
+
+修改这个脚本，调用栈函数可以指定多个函数，例如运行命令是：
+sudo ./trace_line_hits.sh follow_pud_mask "follow_page_mask follow_p4d_mask" 1.
+检查每个的调用栈，必须出现指定的所有函数。
+同时支持不无调用栈函数，写为sudo ./trace_line_hits.sh follow_pud_mask "*" 1
+
+
+
+帮爹写一个python后端程序。收到前端的命令，用python拉这个sh脚本，并将结果返回给前端。
+前端提供的参数有函数名，调用栈函数，sleep时间
+
+
+
+curl -X POST http://127.0.0.1:5000/api/trace \
+     -H "Content-Type: application/json" \
+     -d '{
+           "target_func": "follow_pud_mask",
+           "caller_funcs": "follow_page_mask follow_p4d_mask",
+           "sleep_time": 1
+         }'
+
+curl -X POST http://127.0.0.1:5000/api/trace \
+     -H "Content-Type: application/json" \
+     -d '{
+           "target_func": "follow_pud_mask",
+           "caller_funcs": "follow_page_mask",
+           "sleep_time": 1
+         }'
+
+修改前端和后端代码.
+前端点击开始分析,向后端发送请求.
+后端调用sh脚本,并处理sh的输出,将结果返回给前端.
+前端将结果渲染在输出框中.
+
+
+
+修改输出组件。
+保存状态：保存当前函数；
+新增功能：点击这个函数中的一个函数，查询点击函数执行次数，次数输入为：点击的函数、调用栈为上方的调用栈，时间是上方的时间；
+发送给后端请求查询每行执行次数，将上次的函数保存起来；
+提供一个返回按钮，点击返回按钮，返回到上个状态的函数的信息。
+
+
+
+
+上次你写的是路径分析的逻辑。
+修改这个代码，开始写时长分析的逻辑。
+右上方边框基本不变，依然有一个函数，调用栈函数，sleep时间，分析按钮。
+下方也为结果展示，同样是点击一个函数可以跳转到函数代码，修改是，此时不需要打探针、调用sh脚本统计代码执行情况，只需要perf probe -L 获取函数代码。
+
+
+
+修改这个代码，将 时长分析 的终端输出单独创建一个文件。
+这个文件：
+1. 可以选择函数中2行。因此每行代码，最左边添加一个位置，表示该行被选中。
+2. 最左边的标志，有两种状态，开始、结束。新增一个按钮，表示清空两个标志。
+3. 最左边的按钮、行号、代码使用不同的颜色。
+4. 增加一个开始按钮，点击按钮，向后端发送命令，后端运行时延测试脚本latency_multi_stack_and.sh，这个脚本的两个探针是放置标志位的两行代码，调用栈是上方指定的调用栈。
