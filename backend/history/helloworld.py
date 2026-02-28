@@ -38,7 +38,6 @@ def run_trace_stream():
     def generate():
         try:
             # 使用 Popen 启动进程，结合 stdout=PIPE 捕获输出
-            print(" ".join(cmd))
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -98,56 +97,21 @@ def run_latency_stream():
     start_offset = data.get('start_offset')
     end_offset = data.get('end_offset')
     caller_funcs = data.get('caller_funcs', '*')
-    
-    # 【修改点 1】获取前端传递的采样时长，如果没有传，默认给 5 秒
-    sleep_time = data.get('sleep_time', 5)
 
     # 将传递来的参数构造成 bash 需要的探针参数
     probe1 = f"probe1={target_func}:{start_offset}"
     probe2 = f"probe2={target_func}:{end_offset}"
     
-    # 【修改点 2】把 sleep_time 作为第四个参数传给 bash 脚本
-    cmd = ['sudo', LATENCY_SCRIPT_PATH, probe1, probe2, str(caller_funcs), str(sleep_time)]
+    cmd = ['sudo', LATENCY_SCRIPT_PATH, probe1, probe2, str(caller_funcs)]
 
     def generate():
         try:
-            print(" ".join(cmd))
             process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
                 text=True, bufsize=1, universal_newlines=True
             )
             for line in iter(process.stdout.readline, ''):
                 yield strip_ansi(line)
-            process.stdout.close()
-            process.wait()
-        except Exception as e:
-            yield f"\n[Python 错误] {str(e)}\n"
-
-    return Response(generate(), mimetype='text/plain')
-
-
-# =========================================
-# 新增：调用栈分析接口 (分类聚合并统计调用路径)
-# =========================================
-@app.route('/api/analyze_callstack_stream', methods=['POST'])
-def run_callstack_stream():
-    data = request.json
-    target_func = data.get('target_func')
-    caller_funcs = data.get('caller_funcs', '*')
-    sleep_time = data.get('sleep_time', 5)
-
-    # 假设你的 callstack 脚本在此路径，请根据实际情况修改
-    CALLSTACK_SCRIPT_PATH = './scripts/callstack_analysis.sh'
-    cmd = ['sudo', CALLSTACK_SCRIPT_PATH, target_func, str(caller_funcs), str(sleep_time)]
-
-    def generate():
-        try:
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                text=True, bufsize=1, universal_newlines=True
-            )
-            for line in iter(process.stdout.readline, ''):
-                yield strip_ansi(line)  # 如果你之前定义了 strip_ansi 函数
             process.stdout.close()
             process.wait()
         except Exception as e:

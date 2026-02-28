@@ -4,7 +4,7 @@ import { ref, watch, nextTick, computed } from 'vue'
 const props = defineProps({
   sourceCode: { type: String, default: '' },
   currentFunc: { type: String, default: '' },
-  latencyLog: { type: String, default: '' }, // 接收开始测试后的流式时延日志
+  latencyLog: { type: String, default: '' },
   isAnalyzing: { type: Boolean, default: false }
 })
 
@@ -13,11 +13,9 @@ const emit = defineEmits(['drillDown', 'restore', 'runLatency'])
 const terminalRef = ref(null)
 const historyStack = ref([])
 
-// 标记的行号
 const startLine = ref(null)
 const endLine = ref(null)
 
-// 自动滚动 (仅针对时延分析日志部分)
 watch(() => props.latencyLog, async () => {
   await nextTick()
   if (terminalRef.value) {
@@ -25,7 +23,6 @@ watch(() => props.latencyLog, async () => {
   }
 })
 
-// 解析源码：分离出行号、代码，并注入颜色和点击事件
 const parsedLines = computed(() => {
   if (!props.sourceCode) return []
 
@@ -33,26 +30,24 @@ const parsedLines = computed(() => {
   const keywords = ['if', 'while', 'for', 'switch', 'return', 'sizeof', 'likely', 'unlikely', 'WARN_ON_ONCE', 'catch']
 
   return safeText.split('\n').map(line => {
-    // 匹配 perf probe -L 的输出格式：前面的空格 + 行号 + 空格 + 代码
-    const match = line.match(/^(\s*)(\d+)(\s+)(.*)$/)
+    // ⚠️ 修改点：将 (\s+) 改为 [ \t]{1,2}，只匹配行号后的 1 到 2 个分隔符
+    // 这样代码真正的缩进就会全部落入 match[3] 中被完美保留
+    const match = line.match(/^(\s*)(\d+)[ \t]{1,2}(.*)$/)
     if (match) {
       const offset = parseInt(match[2], 10)
+      const codeText = match[3] // 包含原始缩进的代码
       
-      // 高亮代码中的函数调用
-      const highlightedCode = match[4].replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b(?=\s*\()/g, (m) => {
+      const highlightedCode = codeText.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b(?=\s*\()/g, (m) => {
         if (keywords.includes(m)) return m
         return `<span class="clickable-func" data-func="${m}">${m}</span>`
       })
 
       return {
         hasOffset: true,
-        space1: match[1],
         offset: offset,
-        space2: match[3],
         code: highlightedCode
       }
     } else {
-      // 没有行号的行 (如函数头部或尾部的括号)
       const highlightedCode = line.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b(?=\s*\()/g, (m) => {
         if (keywords.includes(m)) return m
         return `<span class="clickable-func" data-func="${m}">${m}</span>`
@@ -62,7 +57,6 @@ const parsedLines = computed(() => {
   })
 })
 
-// 切换标志位逻辑
 const toggleMarker = (offset) => {
   if (startLine.value === offset) {
     startLine.value = null
@@ -73,7 +67,6 @@ const toggleMarker = (offset) => {
   } else if (endLine.value === null) {
     endLine.value = offset
   } else {
-    // 如果已经满了2个，自动替换结束点
     endLine.value = offset
   }
 }
@@ -94,7 +87,6 @@ const handleStartLatency = () => {
   })
 }
 
-// 点击函数下钻
 const handleTerminalClick = (e) => {
   const target = e.target
   if (target.classList.contains('clickable-func')) {
@@ -107,7 +99,6 @@ const handleTerminalClick = (e) => {
   }
 }
 
-// 返回上一层
 const handleBack = () => {
   if (historyStack.value.length > 0) {
     const prevState = historyStack.value.pop()
@@ -171,7 +162,7 @@ const handleBack = () => {
 }
 .header-actions { display: flex; gap: 8px; }
 button {
-  border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s;
+  border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s; font-family: 'SimHei', '黑体', sans-serif;
 }
 .btn-tool { background: #475569; color: white; }
 .btn-tool:hover { background: #64748b; }
@@ -181,29 +172,27 @@ button {
 .btn-back { background: #3b82f6; color: white; }
 .btn-back:hover { background: #2563eb; }
 
+/* 修改点：源码输出区字体设为黑体 */
 .terminal-body {
-  flex: 1; padding: 20px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 14px;
+  flex: 1; padding: 20px; overflow-y: auto; font-family: 'SimHei', '黑体', monospace; font-size: 14px;
 }
 
-/* 源码排版 */
 .source-container { display: flex; flex-direction: column; }
 .code-line { display: flex; align-items: flex-start; line-height: 1.5; }
 .code-line:hover { background: rgba(255,255,255,0.05); }
 
-/* 列颜色区分 */
 .marker-col { width: 30px; flex-shrink: 0; cursor: pointer; user-select: none; }
-.mark-s { color: #10b981; font-weight: bold; } /* 绿色 Start */
-.mark-e { color: #ef4444; font-weight: bold; } /* 红色 End */
-.mark-empty { color: #475569; } /* 灰色 未选 */
+.mark-s { color: #10b981; font-weight: bold; }
+.mark-e { color: #ef4444; font-weight: bold; }
+.mark-empty { color: #475569; }
 
-.line-col { width: 40px; flex-shrink: 0; color: #eab308; text-align: right; padding-right: 10px; user-select: none;} /* 黄色行号 */
-.code-col { flex: 1; color: #f8fafc; white-space: pre-wrap;} /* 白色代码 */
+.line-col { width: 40px; flex-shrink: 0; color: #eab308; text-align: right; padding-right: 10px; user-select: none;} 
+.code-col { flex: 1; color: #f8fafc; white-space: pre-wrap;} 
 
 :deep(.clickable-func) { color: #60a5fa; text-decoration: underline; cursor: pointer; transition: 0.2s; }
 :deep(.clickable-func:hover) { background: rgba(96, 165, 250, 0.2); color: #93c5fd; }
 
-/* 底部日志区 */
 .divider { border-color: #334155; margin: 20px 0; }
 .log-title { color: #8b5cf6; font-weight: bold; margin-bottom: 10px; }
-.latency-pre { margin: 0; color: #22c55e; white-space: pre-wrap; line-height: 1.5; }
+.latency-pre { margin: 0; color: #22c55e; white-space: pre-wrap; line-height: 1.5; font-family: inherit; }
 </style>

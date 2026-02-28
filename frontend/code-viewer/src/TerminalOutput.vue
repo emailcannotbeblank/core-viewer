@@ -48,31 +48,27 @@ const parsedLog = computed(() => {
   const lines = safeText.split('\n')
   const processedLines = lines.map(line => {
     // 正则匹配 Bash 脚本打印的格式: [ 命中次数 ] 行号 代码
-    // 捕获组: 1=[  2=次数  3=]  4=空格  5=行号  6=空格  7=代码
     const statRegex = /^(\[)(.*?)(\])(\s+)(\d+)(\s+)(.*)$/
     const match = line.match(statRegex)
 
     if (match) {
       const rawCount = match[2].trim()
       
-      // 判断命中次数，赋予不同的颜色类名
       let countClass = 'count-zero'
       if (rawCount !== '0' && rawCount !== 'N/A' && rawCount !== '-') {
-        countClass = 'count-hit' // 大于 0 的命中，高亮绿色
+        countClass = 'count-hit'
       } else if (rawCount === 'N/A' || rawCount === '-') {
-        countClass = 'count-na'  // 无法打探针，暗灰色
+        countClass = 'count-na'
       }
 
-      // 提取各个部分
       const p1_bracketL = match[1]
-      const p2_count    = match[2] // 命中次数 (保留原始空格，保证对齐)
+      const p2_count    = match[2] 
       const p3_bracketR = match[3]
       const p4_space    = match[4]
-      const p5_lineNum  = match[5] // 行号
+      const p5_lineNum  = match[5] 
       const p6_space    = match[6]
-      const p7_code     = highlightFunctions(match[7]) // 代码本体，同时解析内部的函数点击
+      const p7_code     = highlightFunctions(match[7]) 
 
-      // 组装带颜色的 HTML
       return `<span class="stat-bracket">${p1_bracketL}</span>` +
              `<span class="stat-count ${countClass}">${p2_count}</span>` +
              `<span class="stat-bracket">${p3_bracketR}</span>` +
@@ -82,14 +78,12 @@ const parsedLog = computed(() => {
              `<span class="stat-code">${p7_code}</span>`
     }
 
-    // 非代码统计行（如普通日志输出），直接高亮里面的函数即可
     return highlightFunctions(line)
   })
 
   return processedLines.join('\n')
 })
 
-// 利用事件委托，监听整个 pre 标签内的点击事件
 const handleTerminalClick = (e) => {
   const target = e.target
   if (target.classList.contains('clickable-func')) {
@@ -104,7 +98,6 @@ const handleTerminalClick = (e) => {
   }
 }
 
-// 返回上一层级
 const handleBack = () => {
   if (historyStack.value.length > 0) {
     const prevState = historyStack.value.pop()
@@ -130,7 +123,7 @@ const handleBack = () => {
 
 <style scoped>
 .panel-output {
-  flex: 8; background: #0f172a; color: #cbd5e1; /* 默认文字颜色调柔和 */
+  flex: 8; background: #0f172a; color: #cbd5e1;
   display: flex; flex-direction: column; overflow: hidden;
 }
 .terminal-header {
@@ -141,34 +134,27 @@ const handleBack = () => {
 .btn-back {
   background: #3b82f6; color: white; border: none;
   padding: 4px 12px; border-radius: 4px; cursor: pointer;
-  font-size: 12px; font-weight: bold; transition: 0.2s;
+  font-size: 12px; font-weight: bold; transition: 0.2s; font-family: 'SimHei', '黑体', sans-serif;
 }
 .btn-back:hover { background: #2563eb; }
 
+/* 修改点：终端代码区也强制使用黑体字体 */
 .terminal-body {
-  flex: 1; padding: 20px; overflow-y: auto; font-family: 'Consolas', monospace;
+  flex: 1; padding: 20px; overflow-y: auto; font-family: 'SimHei', '黑体', monospace;
 }
-pre { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+pre { margin: 0; white-space: pre-wrap; line-height: 1.5; font-family: inherit; }
 
-/* ======== 新增的代码分色语法高亮 ======== */
-:deep(.stat-bracket) { color: #64748b; } /* 中括号：石板灰 */
-:deep(.stat-count.count-hit) { color: #22c55e; font-weight: bold; } /* 有命中：醒目绿色加粗 */
-:deep(.stat-count.count-zero) { color: #94a3b8; } /* 没走到(0)：普通灰 */
-:deep(.stat-count.count-na) { color: #475569; } /* 无法打点(N/A)：暗灰 */
-:deep(.stat-line) { color: #eab308; } /* 行号：暗黄色 (类似 VSCode 行号色) */
-:deep(.stat-code) { color: #f8fafc; } /* 源代码：亮白色 */
+:deep(.stat-bracket) { color: #64748b; }
+:deep(.stat-count.count-hit) { color: #22c55e; font-weight: bold; }
+:deep(.stat-count.count-zero) { color: #94a3b8; }
+:deep(.stat-count.count-na) { color: #475569; }
+:deep(.stat-line) { color: #eab308; }
+:deep(.stat-code) { color: #f8fafc; }
 
-/* 函数超链接样式 */
 :deep(.clickable-func) {
-  color: #60a5fa; 
-  text-decoration: underline;
-  cursor: pointer;
-  border-radius: 2px;
-  padding: 0 2px;
-  transition: 0.2s;
+  color: #60a5fa; text-decoration: underline; cursor: pointer; border-radius: 2px; padding: 0 2px; transition: 0.2s;
 }
 :deep(.clickable-func:hover) {
-  background: rgba(96, 165, 250, 0.2);
-  color: #93c5fd;
+  background: rgba(96, 165, 250, 0.2); color: #93c5fd;
 }
 </style>

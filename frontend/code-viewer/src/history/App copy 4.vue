@@ -1,8 +1,10 @@
+<!-- 修改布局 -->
+
 <script setup>
 import { ref } from 'vue'
 import TerminalOutput from './TerminalOutput.vue'
 import DurationOutput from './DurationOutput.vue'
-import CallStackOutput from './CallStackOutput.vue' 
+import CallStackOutput from './CallStackOutput.vue' // 【新增】引入调用栈组件
 
 const currentTab = ref(1)
 const serverIp = ref('127.0.0.1:5000')
@@ -16,7 +18,7 @@ const formData = ref({
 const pathOutputLog = ref('') 
 const sourceCodeLog = ref('') 
 const latencyLog = ref('')    
-const callStackLog = ref('')  
+const callStackLog = ref('')  // 【新增】存放调用栈分析日志
 const isLoading = ref(false)
 
 const selectTab = (idx) => {
@@ -29,7 +31,7 @@ const handleClear = () => {
   pathOutputLog.value = ''
   sourceCodeLog.value = ''
   latencyLog.value = ''
-  callStackLog.value = ''     
+  callStackLog.value = ''     // 【新增】清空调用栈日志
 }
 
 const getBaseUrl = () => {
@@ -85,6 +87,9 @@ const handleAnalyze = async () => {
         sourceCodeLog.value = `获取源码失败:\n${resData.error || resData.output}`
       }
     }
+    // ==========================================
+    // 【新增】：第 3 个 Tab 的请求逻辑
+    // ==========================================
     else if (currentTab.value === 3) {
       callStackLog.value = `[${startTime.toLocaleTimeString()}] 🚀 启动调用栈分类分析...\n--------------------------------------------------\n`
       const response = await fetch(`${baseUrl}/api/analyze_callstack_stream`, {
@@ -109,6 +114,7 @@ const handleAnalyze = async () => {
   }
 }
 
+// 时延测试逻辑保持不变
 const handleRunLatency = async ({ startOffset, endOffset }) => {
   const baseUrl = getBaseUrl()
   if (!baseUrl) { alert('请输入服务器 IP'); return; }
@@ -149,7 +155,7 @@ const handleRestore = (prevState) => {
   formData.value.functionName = prevState.func
   if (currentTab.value === 1) pathOutputLog.value = prevState.log
   else if (currentTab.value === 2) sourceCodeLog.value = prevState.code
-  else callStackLog.value = prevState.log 
+  else callStackLog.value = prevState.log // 【新增】
 }
 </script>
 
@@ -157,53 +163,51 @@ const handleRestore = (prevState) => {
   <div class="layout-container">
     <aside class="sidebar">
       <div class="logo">🚀 Kernel Tools</div>
-      
-      <div class="nav-tabs">
-        <div class="nav-item" :class="{active: currentTab===1}" @click="selectTab(1)">📂 路径分析</div>
-        <div class="nav-item" :class="{active: currentTab===2}" @click="selectTab(2)">⏱️ 时长分析</div>
-        <div class="nav-item" :class="{active: currentTab===3}" @click="selectTab(3)">🧬 调用栈分析</div>
-      </div>
-
-      <div class="sidebar-form">
-        <div class="control-group">
-          <label>🎯 函数名 (Function)</label>
-          <input v-model="formData.functionName" type="text" placeholder="例如: follow_page_mask">
-        </div>
-
-        <div class="control-group flex-grow">
-          <label>📜 调用栈过滤 (Call Stack)</label>
-          <textarea v-model="formData.callStack" placeholder="限制来源输入，如: get_user_pages。留空为统计所有。"></textarea>
-        </div>
-
-        <div class="control-row">
-          <div class="control-group" style="flex: 2;">
-            <label>🌐 服务器 IP</label>
-            <input v-model="serverIp" type="text" placeholder="127.0.0.1:5000">
-          </div>
-          <div class="control-group" style="flex: 1;">
-            <label>⏳ 采样(秒)</label>
-            <input v-model.number="formData.sleepTime" type="number" min="1" max="60">
-          </div>
-        </div>
-      </div>
-
-      <div class="sidebar-actions">
-        <button class="btn-clear-side" @click="handleClear">清空</button>
-        <button class="btn-run-side" @click="handleAnalyze" :disabled="isLoading">
-          {{ isLoading ? '⏳ 执行中' : '⚡ 拉取信息' }}
-        </button>
-      </div>
+      <div class="nav-item" :class="{active: currentTab===1}" @click="selectTab(1)">📂 路径分析</div>
+      <div class="nav-item" :class="{active: currentTab===2}" @click="selectTab(2)">⏱️ 时长分析</div>
+      <div class="nav-item" :class="{active: currentTab===3}" @click="selectTab(3)">🧬 调用栈分析</div>
     </aside>
 
     <main class="workspace">
+      <div class="floating-actions">
+        <div class="ip-input-group">
+          <label>服务器 IP:</label>
+          <input v-model="serverIp" type="text" placeholder="例: 127.0.0.1:5000">
+        </div>
+        <button class="btn-clear" @click="handleClear">清空</button>
+        <button class="btn-run" @click="handleAnalyze" :disabled="isLoading">
+          {{ isLoading ? '⏳ 执行中...' : '⚡ 拉取信息' }}
+        </button>
+      </div>
+
+      <div class="panel-input">
+        <div class="input-row">
+          <div class="input-group" style="flex: 2;">
+            <label>函数名 (Function Name)</label>
+            <input v-model="formData.functionName" type="text" placeholder="例如: follow_page_mask" class="full-width">
+          </div>
+          <div class="input-group" style="flex: 1; margin-left: 15px;">
+            <label>采样时长 (秒)</label>
+            <input v-model.number="formData.sleepTime" type="number" min="1" max="60" class="full-width">
+          </div>
+        </div>
+
+        <div class="input-group flex-grow">
+          <label>调用栈 / 日志 (Call Stack) [选填]</label>
+          <textarea v-model="formData.callStack" placeholder="若限制来源请输入，如: get_user_pages。留空表示统计所有来源。" class="full-width code-area"></textarea>
+        </div>
+      </div>
+
       <TerminalOutput 
-        v-show="currentTab === 1"  :log="pathOutputLog" 
+        v-show="currentTab === 1"
+        :log="pathOutputLog" 
         :current-func="formData.functionName"
         @drill-down="handleDrillDown"
         @restore="handleRestore"
       />
       <DurationOutput
-        v-show="currentTab === 2"  :source-code="sourceCodeLog"
+        v-show="currentTab === 2"
+        :source-code="sourceCodeLog"
         :latency-log="latencyLog"
         :current-func="formData.functionName"
         :is-analyzing="isLoading"
@@ -212,7 +216,8 @@ const handleRestore = (prevState) => {
         @run-latency="handleRunLatency"
       />
       <CallStackOutput
-        v-show="currentTab === 3"  :log="callStackLog"
+        v-show="currentTab === 3"
+        :log="callStackLog"
         :current-func="formData.functionName"
         @drill-down="handleDrillDown"
         @restore="handleRestore"
@@ -226,64 +231,30 @@ const handleRestore = (prevState) => {
 html, body, #app { margin: 0 !important; padding: 0 !important; width: 100vw !important; height: 100vh !important; max-width: none !important; display: block !important; overflow: hidden !important; font-family: 'SimHei', '黑体', sans-serif; box-sizing: border-box; }
 * { box-sizing: border-box; }
 </style>
-
 <style scoped>
+/* 保持原样 */
 .layout-container { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
-
-/* 侧边栏调整：加宽到 280px，并采用 Flex 布局以撑满高度 */
-.sidebar { 
-  width: 280px; background: #1e293b; color: #fff; 
-  display: flex; flex-direction: column; flex-shrink: 0; 
-  border-right: 1px solid #0f172a;
-}
+.sidebar { width: 240px; background: #1e293b; color: #fff; display: flex; flex-direction: column; flex-shrink: 0; }
 .logo { padding: 20px; font-weight: bold; background: #0f172a; font-size: 18px; }
-
-/* 导航 Tabs */
-.nav-tabs { display: flex; flex-direction: column; border-bottom: 1px solid #334155; padding-bottom: 10px; }
-.nav-item { padding: 12px 20px; cursor: pointer; color: #94a3b8; transition: 0.2s; font-size: 14px; }
+.nav-item { padding: 15px 20px; cursor: pointer; color: #94a3b8; transition: 0.2s; }
 .nav-item:hover { background: #334155; color: #fff; }
 .nav-item.active { background: #10b981; color: #fff; font-weight: bold; }
-
-/* 中间的参数表单区 (占据剩余空间) */
-.sidebar-form {
-  flex: 1; display: flex; flex-direction: column; gap: 15px; 
-  padding: 20px; overflow-y: auto;
-}
-.control-group { display: flex; flex-direction: column; gap: 6px; }
-.control-group.flex-grow { flex: 1; }
-.control-row { display: flex; gap: 10px; width: 100%; }
-
-/* 暗黑风格的 Input 和 Textarea */
-.control-group label { font-size: 12px; color: #94a3b8; font-weight: bold; }
-.control-group input, .control-group textarea { 
-  background: #0f172a; border: 1px solid #334155; color: #fff; 
-  padding: 8px 10px; border-radius: 4px; font-family: 'Consolas', 'SimHei', monospace; 
-  font-size: 13px; outline: none; transition: 0.2s; width: 100%; box-sizing: border-box;
-}
-.control-group input:focus, .control-group textarea:focus { border-color: #10b981; }
-.control-group textarea { flex: 1; resize: none; min-height: 100px; } /* 让多行文本框填满空间 */
-
-/* 侧边栏底部控制区 */
-.sidebar-actions { 
-  padding: 20px; background: #0f172a; border-top: 1px solid #334155; 
-  display: flex; gap: 10px; 
-}
-.btn-run-side { 
-  flex: 1; background: #10b981; color: white; border: none; padding: 10px 0; 
-  cursor: pointer; border-radius: 4px; font-weight: bold; font-family: inherit; transition: 0.2s;
-}
-.btn-run-side:hover { background: #059669; }
-.btn-run-side:disabled { background: #064e3b; color: #94a3b8; cursor: not-allowed; }
-
-.btn-clear-side { 
-  background: #475569; color: white; border: none; padding: 10px 15px; 
-  cursor: pointer; border-radius: 4px; font-weight: bold; font-family: inherit; transition: 0.2s;
-}
-.btn-clear-side:hover { background: #64748b; }
-
-/* 右侧工作区 (纯粹的 Flex 容器) */
-.workspace { 
-  flex: 1; display: flex; flex-direction: column; position: relative; background: #0f172a; width: 0; 
-}
-/* 注意：由于 TerminalOutput 等子组件自带 flex: 8 的设定，并且内部使用了深色背景，这里它们会自动铺满右侧空间 */
+.workspace { flex: 1; display: flex; flex-direction: column; position: relative; background: #f1f5f9; width: 0; }
+.floating-actions { position: absolute; top: 15px; right: 20px; z-index: 100; display: flex; gap: 10px; align-items: center; }
+.ip-input-group { display: flex; align-items: center; background: white; padding: 5px 10px; border-radius: 4px; border: 1px solid #cbd5e1; gap: 8px; }
+.ip-input-group label { font-size: 13px; font-weight: bold; color: #64748b; margin: 0; }
+.ip-input-group input { border: none; outline: none; width: 150px; font-family: 'SimHei', '黑体', sans-serif; font-size: 13px; }
+.btn-run { background: #10b981; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold; font-family: 'SimHei', '黑体', sans-serif; }
+.btn-run:hover { background: #059669; }
+.btn-run:disabled { background: #94a3b8; cursor: not-allowed; }
+.btn-clear { background: #e2e8f0; color: #475569; border: none; padding: 8px 15px; cursor: pointer; border-radius: 4px; font-family: 'SimHei', '黑体', sans-serif; }
+.btn-clear:hover { background: #cbd5e1; }
+.panel-input { flex: 2; background: white; padding: 60px 20px 10px 20px; display: flex; flex-direction: column; border-bottom: 2px solid #e2e8f0; }
+.input-row { display: flex; width: 100%; margin-bottom: 8px; }
+.input-group { display: flex; flex-direction: column; }
+.input-group label { font-size: 13px; font-weight: bold; color: #64748b; margin-bottom: 4px; }
+.input-group.flex-grow { flex: 1; display: flex; flex-direction: column; }
+.full-width { width: 100%; border: 1px solid #cbd5e1; padding: 8px; border-radius: 4px; font-family: 'SimHei', '黑体', sans-serif; outline: none; }
+.full-width:focus { border-color: #10b981; }
+.code-area { flex: 1; resize: none; background: #f8fafc; }
 </style>

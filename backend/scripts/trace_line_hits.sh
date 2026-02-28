@@ -7,6 +7,7 @@ fi
 
 if [ "$#" -lt 2 ]; then
   echo "用法: $0 <目标函数名> <调用栈过滤函数名或*> [采样时间(秒)]"
+  echo "示例: $0 follow_page ~cmp_and_merge_page 5"
   exit 1
 fi
 
@@ -15,8 +16,11 @@ CALLER_FUNC=$2
 SLEEP_TIME=${3:-5}
 
 echo "🔍 目标函数: $TARGET_FUNC"
+# 【修改点 1】：增加对 ~ 前缀的识别和日志输出
 if [ "$CALLER_FUNC" = "*" ]; then
   echo "🎯 过滤调用: 统计所有来源"
+elif [[ "$CALLER_FUNC" == \~* ]]; then
+  echo "🎯 过滤调用: 剔除来自 ${CALLER_FUNC#~} 的调用 (反向过滤)"
 else
   echo "🎯 过滤调用: 仅统计来自 $CALLER_FUNC 的调用"
 fi
@@ -67,12 +71,35 @@ echo "[4/6] 正在解析调用栈 (perf script)..."
 perf script > /tmp/perf_script.txt
 
 echo "[5/6] 正在分析调用栈并统计命中次数..."
-# 优化后的 awk: 如果传入 "*", 则 any_caller=1, 直接放行; 否则严格匹配函数名
+# 【修改点 2】：优化 awk 逻辑，支持正反向过滤
 awk -v caller="$CALLER_FUNC" -v target="$TARGET_FUNC" '
-BEGIN { current_offset = ""; has_caller = 0; any_caller = (caller == "*"); }
+function is_valid() {
+    if (any_caller) return 1;
+    # 如果是 ~ 规则，没找到 has_caller==0 才算合法
+    if (is_neg) return (has_caller == 0 ? 1 : 0);
+    # 如果是普通规则，找到 has_caller==1 才算合法
+    return (has_caller == 1 ? 1 : 0);
+}
+BEGIN { 
+    current_offset = ""; 
+    has_caller = 0; 
+    any_caller = 0;
+    is_neg = 0;
+    search_target = caller;
+
+    if (caller == "*") {
+        any_caller = 1;
+    } else if (substr(caller, 1, 1) == "~") {
+        is_neg = 1;
+        search_target = substr(caller, 2); # 剔除掉 ~ 符号进行匹配
+    }
+}
 
 /^[^\t ]/ {
-    if (current_offset != "" && (any_caller || has_caller)) { counts[current_offset]++; }
+    # 结算上一条记录
+    if (current_offset != "" && is_valid()) { counts[current_offset]++; }
+    
+    # 初始化新记录
     current_offset = ""; has_caller = 0;
     search_str = "probe:" target "_line_"
     idx = index($0, search_str)
@@ -83,10 +110,13 @@ BEGIN { current_offset = ""; has_caller = 0; any_caller = (caller == "*"); }
     }
 }
 /^[ \t]/ {
-    if (current_offset != "" && !any_caller && index($0, caller) > 0) { has_caller = 1; }
+    if (current_offset != "" && !any_caller) {
+        if (index($0, search_target) > 0) { has_caller = 1; }
+    }
 }
 END {
-    if (current_offset != "" && (any_caller || has_caller)) { counts[current_offset]++; }
+    # 结算最后一条记录
+    if (current_offset != "" && is_valid()) { counts[current_offset]++; }
     for (o in counts) { print o, counts[o]; }
 }' /tmp/perf_script.txt > /tmp/perf_counts.txt
 
@@ -119,5 +149,6 @@ echo "----------------------------------------------------------------------"
 
 echo "🧹 正在清理探针和临时文件..."
 perf probe -q -d "${TARGET_FUNC}_line_*" 2>/dev/null
-rm -f /tmp/perf_lines.txt /tmp/perf_script.txt /tmp/perf_counts.txt /tmp/valid_probes.txt perf.data
+rm -f /tmp/perf_lines.txt /tmp/perf_script.txt /tmp/perf_counts.txt /tmp/valid_probes.txt
+rm -f perf.data
 echo "✨ 完成！"

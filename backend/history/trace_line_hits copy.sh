@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 添加非调用留念
+
+
 if [ "$EUID" -ne 0 ]; then
   echo "❌ 请使用 sudo 运行此脚本，perf 需要 root 权限。"
   exit 1
@@ -40,9 +43,17 @@ touch /tmp/valid_probes.txt
 VALID_PROBES=0
 for OFFSET in $OFFSETS; do
   PROBE_NAME="${TARGET_FUNC}_line_${OFFSET}"
-  if perf probe -q -a "${PROBE_NAME}=${TARGET_FUNC}:${OFFSET}" 2>/dev/null; then
+  
+  # 使用 sh -c 包装，彻底隔离段错误信号，防止它污染终端输出
+  sh -c "perf probe -q -a '${PROBE_NAME}=${TARGET_FUNC}:${OFFSET}' >/dev/null 2>&1"
+  RET=$?
+  
+  if [ $RET -eq 0 ]; then
     VALID_PROBES=$((VALID_PROBES + 1))
     echo "$OFFSET" >> /tmp/valid_probes.txt
+  elif [ $RET -eq 139 ]; then
+    # 139 是段错误 (Segfault) 的标准退出码
+    echo "⚠️ 警告: perf 解析第 $OFFSET 行时发生段错误崩溃，已自动跳过该行。"
   fi
 done
 
@@ -111,5 +122,6 @@ echo "----------------------------------------------------------------------"
 
 echo "🧹 正在清理探针和临时文件..."
 perf probe -q -d "${TARGET_FUNC}_line_*" 2>/dev/null
-rm -f /tmp/perf_lines.txt /tmp/perf_script.txt /tmp/perf_counts.txt /tmp/valid_probes.txt perf.data
+rm -f /tmp/perf_lines.txt /tmp/perf_script.txt /tmp/perf_counts.txt /tmp/valid_probes.txt
+rm -f perf.data
 echo "✨ 完成！"
