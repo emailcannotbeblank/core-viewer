@@ -1,0 +1,371 @@
+# guest配置
+
+将以下代码保存到/root/agent.py
+# 保存为 agent.py
+import socket
+import json
+import traceback
+
+# VSOCK 常量定义
+# VMADDR_CID_ANY (-1) 表示监听分配给该虚拟机的任意 CID
+VMADDR_CID_ANY = -1
+VSOCK_PORT = 5000
+
+user_function = None
+
+class MockRequest:
+    """模拟 Flask 的 request 对象，兼容用户原有的代码逻辑"""
+    def __init__(self, json_data):
+        self._json = json_data
+
+    def get_json(self, silent=True):
+        return self._json
+
+def handle_connection(conn):
+    global user_function
+    try:
+        # 直接从 VSOCK 读取宿主机发来的 HTTP 报文
+        # 实际生产环境中可能需要循环 recv 直到读取完完整的 Content-Length
+        data = conn.recv(8192)
+        if not data:
+            return
+
+        # 极简 HTTP 解析 (避免引入任何外部 HTTP 库)
+        request_text = data.decode('utf-8')
+        headers_part, body = request_text.split('\r\n\r\n', 1)
+        first_line = headers_part.split('\r\n')[0]
+        method, path, _ = first_line.split(' ')
+
+        status_code = "200 OK"
+        response_body = ""
+
+        if method == 'POST' and path == '/load':
+            payload = json.loads(body)
+            code = payload.get('code')
+            
+            # 动态编译传入的 Python 字符串
+            local_scope = {}
+            exec(code, globals(), local_scope)
+            user_function = local_scope.get('function_handler')
+            
+            if not user_function:
+                status_code = "400 Bad Request"
+                response_body = "Error: function_handler not found\n"
+            else:
+                response_body = "Function loaded successfully\n"
+
+        elif method == 'POST' and path == '/invoke':
+            if not user_function:
+                status_code = "400 Bad Request"
+                response_body = "Error: No function loaded\n"
+            else:
+                payload = json.loads(body)
+                req = MockRequest(payload)
+                # 直接调用常驻内存的函数
+                result = user_function(req)
+                response_body = str(result) + "\n"
+        else:
+            status_code = "404 Not Found"
+            response_body = "Not found\n"
+
+        # 构造标准的 HTTP 响应返回给宿主机的 curl
+        response = f"HTTP/1.1 {status_code}\r\n" \
+                   f"Content-Length: {len(response_body)}\r\n" \
+                   f"Connection: close\r\n\r\n" \
+                   f"{response_body}"
+        conn.sendall(response.encode('utf-8'))
+
+    except Exception as e:
+        error_msg = str(e) + "\n" + traceback.format_exc()
+        response = f"HTTP/1.1 500 Internal Server Error\r\n" \
+                   f"Content-Length: {len(error_msg)}\r\n\r\n" \
+                   f"{error_msg}"
+        conn.sendall(response.encode('utf-8'))
+    finally:
+        conn.close()
+
+def main():
+    # 创建原生的 VSOCK 套接字
+    sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+    
+    # 绑定并监听
+    sock.bind((VMADDR_CID_ANY, VSOCK_PORT))
+    sock.listen(128)  # 积压队列大小
+    print(f"[Agent] Native VSOCK listening on port {VSOCK_PORT}...")
+
+    while True:
+        conn, addr = sock.accept()
+        # 这里为单线程同步处理。若需高并发，可替换为 ThreadPoolExecutor 或 asyncio
+        handle_connection(conn)
+
+if __name__ == '__main__':
+    main()
+
+
+创建/root/init.sh, 并chmod +x
+cat << 'EOF' | sudo tee ubuntu_vm/root/init.sh
+#!/bin/sh
+# 1. 挂载内核伪文件系统（Agent 运行和 Python 环境的基础依赖）
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+# 2. 挂载 cgroup v2 (为后续可能的资源隔离或 Kubernetes 节点组件铺路)
+mount -t cgroup2 none /sys/fs/cgroup
+
+# 3. 配置本地回环网络 (虽然走了 VSOCK，但 Python 内部的一些库可能隐式依赖 lo)
+ip link set lo up
+
+# 4. 启动你的 Agent，使用 exec 替换当前 Shell，使其成为 PID 1
+echo "Starting FaaS Agent..."
+exec python3 /root/agent.py
+EOF
+
+
+
+修改config文件, 执行init.sh文件
+boot_args中添加/root/init.sh
+即可完成guest 镜像设置
+
+
+# 1 一个启动的测试
+使用firecracker --api-socck fuck.socket --config-file config.json启动虚拟机
+
+运行以下代码:
+# 保存为 host_proxy.py
+import socket
+import threading
+
+UDS_PATH = "./v.sock"  # Firecracker 配置中的 uds_path
+VSOCK_PORT = 5000      # Guest 中监听的 VSOCK 端口
+LISTEN_PORT = 8080     # 给 curl 留的本地 TCP 端口
+
+def forward(source, destination):
+    try:
+        while True:
+            data = source.recv(4096)
+            if not data: break
+            destination.sendall(data)
+    except: pass
+    finally:
+        source.close()
+        destination.close()
+
+def handle_client(client_socket):
+    uds_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        uds_socket.connect(UDS_PATH)
+        # 发送 Firecracker 要求的握手协议
+        uds_socket.sendall(f"CONNECT {VSOCK_PORT}\n".encode())
+        resp = uds_socket.recv(1024)
+        if b"OK" not in resp:
+            client_socket.close()
+            return
+            
+        threading.Thread(target=forward, args=(client_socket, uds_socket)).start()
+        threading.Thread(target=forward, args=(uds_socket, client_socket)).start()
+    except Exception as e:
+        client_socket.close()
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('127.0.0.1', LISTEN_PORT))
+server.listen(5)
+print(f"Proxy ready: curl http://127.0.0.1:{LISTEN_PORT}")
+
+while True:
+    client, addr = server.accept()
+    threading.Thread(target=handle_client, args=(client,)).start()
+
+创建代码文件:
+{
+  "code": "def function_handler(request):\n    req_data = request.get_json(silent=True) or {}\n    name = req_data.get('name', 'World')\n    return 'Hello, ' + name + '!\\n'\n"
+}
+
+- 动态加载函数
+curl -X POST http://127.0.0.1:8080/load \
+     -H "Content-Type: application/json" \
+     -d @payload_load.json
+
+- 调用函数
+curl -X POST http://127.0.0.1:8080/invoke \
+     -H "Content-Type: application/json" \
+     -d '{}'
+
+
+curl -X POST http://127.0.0.1:8080/invoke \
+     -H "Content-Type: application/json" \
+     -d '{"name": "Firecracker"}'
+
+
+# 2 管理多个虚拟机
+
+
+# 保存为 faas_controller.py
+import os
+import socket
+import subprocess
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# 全局配置
+KERNEL_PATH = os.path.abspath("vmlinux.bin")
+ROOTFS_PATH = os.path.abspath("ubuntu-22.04.ext4")
+VSOCK_PORT = 5000
+LISTEN_PORT = 8080
+
+class FaaSManager:
+    def __init__(self):
+        self.active_vms = {}
+        self.lock = threading.Lock()
+
+    def create_vm(self, vm_id):
+        with self.lock:
+            if vm_id in self.active_vms:
+                return False, "VM already exists"
+            
+            # 1. 清理可能残留的 Socket 文件
+            api_sock = f"/tmp/fc_{vm_id}.sock"
+            uds_path = f"/tmp/v_{vm_id}.sock"
+            for p in [api_sock, uds_path]:
+                if os.path.exists(p): os.remove(p)
+
+            # 2. 生成该虚拟机的专属配置
+            # 关键优化：rootfs 设置为只读，1000 个 VM 共享同一份磁盘文件以最大化内存去重效果
+            config = {
+                "boot-source": {
+                    "kernel_image_path": KERNEL_PATH,
+                    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off rw root=/dev/vda systemd.unified_cgroup_hierarchy=1 cgroup_no_v1=all init=/root/init.sh"
+                },
+                "drives": [{
+                    "drive_id": "rootfs",
+                    "path_on_host": ROOTFS_PATH,
+                    "is_root_device": True,
+                    "is_read_only": True  
+                }],
+                "machine-config": {
+                    "vcpu_count": 1,
+                    "mem_size_mib": 512, # 缩减单 VM 内存配额以适应高密度部署
+                    "smt": False
+                },
+                "vsock": {
+                    "guest_cid": int(vm_id) + 3, # CID 必须全局唯一
+                    "uds_path": uds_path
+                }
+            }
+            
+            config_path = f"/tmp/config_{vm_id}.json"
+            with open(config_path, "w") as f:
+                json.dump(config, f)
+
+            # 3. 异步拉起 Firecracker 进程
+            cmd = ["firecracker", "--api-sock", api_sock, "--config-file", config_path]
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            self.active_vms[vm_id] = {"proc": proc, "uds_path": uds_path}
+            return True, f"VM {vm_id} created and booting"
+
+manager = FaaSManager()
+
+class APIHandler(BaseHTTPRequestHandler):
+    def send_json_response(self, status, message):
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({"message": message}).encode())
+
+    def proxy_to_vsock(self, vm_id, target_path, body_bytes):
+        """将 HTTP 请求通过 VSOCK UDS 协议路由到对应的微虚拟机"""
+        if vm_id not in manager.active_vms:
+            self.send_json_response(404, f"VM {vm_id} not found")
+            return
+
+        uds_path = manager.active_vms[vm_id]["uds_path"]
+        uds_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        
+        try:
+            uds_socket.connect(uds_path)
+            # 发送 Firecracker 握手协议
+            uds_socket.sendall(f"CONNECT {VSOCK_PORT}\n".encode())
+            resp = uds_socket.recv(1024)
+            if b"OK" not in resp:
+                raise Exception("VSOCK Connection rejected by Firecracker")
+
+            # 重新组装 HTTP 请求发往 Guest 内部的 Agent
+            req = f"POST {target_path} HTTP/1.1\r\n" \
+                  f"Host: localhost\r\n" \
+                  f"Content-Length: {len(body_bytes)}\r\n" \
+                  f"Content-Type: application/json\r\n\r\n"
+            uds_socket.sendall(req.encode() + body_bytes)
+
+            # 读取 Agent 返回的 HTTP 响应
+            response_data = b""
+            while True:
+                chunk = uds_socket.recv(4096)
+                if not chunk: break
+                response_data += chunk
+                if len(chunk) < 4096: break
+
+            # 解析返回的 HTTP 报文，提取 Body 转发给外部 curl
+            body_start = response_data.find(b"\r\n\r\n") + 4
+            result_body = response_data[body_start:].decode('utf-8').strip()
+            self.send_json_response(200, result_body)
+            
+        except Exception as e:
+            self.send_json_response(500, f"VSOCK Communication Error: {str(e)}")
+        finally:
+            uds_socket.close()
+
+    def do_POST(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+        
+        # 路由解析: /vm/<vm_id>/<action>
+        parts = self.path.strip("/").split("/")
+        if len(parts) != 3 or parts[0] != "vm":
+            self.send_json_response(400, "Invalid URL format. Use /vm/<id>/<action>")
+            return
+            
+        vm_id, action = parts[1], parts[2]
+
+        if action == "create":
+            success, msg = manager.create_vm(vm_id)
+            self.send_json_response(200 if success else 400, msg)
+        elif action == "load":
+            self.proxy_to_vsock(vm_id, "/load", body)
+        elif action == "invoke":
+            self.proxy_to_vsock(vm_id, "/invoke", body)
+        else:
+            self.send_json_response(400, f"Unknown action: {action}")
+
+if __name__ == '__main__':
+    server = ThreadingHTTPServer(('127.0.0.1', LISTEN_PORT), APIHandler)
+    print(f"FaaS Control Plane ready: http://127.0.0.1:{LISTEN_PORT}")
+    server.serve_forever()
+
+如何使用 curl 调度你的集群
+启动 faas_controller.py 后，你可以打开一个新的宿主机终端，依次验证以下核心功能：
+
+功能 1：创建一个虚拟机 (分配 ID 为 101)
+
+Bash
+curl -X POST http://127.0.0.1:8080/vm/101/create
+(等待约 1 秒，微虚拟机启动并准备就绪)
+
+功能 2：将函数代码动态加载至虚拟机 101
+
+Bash
+curl -X POST http://127.0.0.1:8080/vm/101/load \
+     -H "Content-Type: application/json" \
+     -d @payload_load.json
+功能 3：调用虚拟机 101 执行已加载的函数
+
+Bash
+curl -X POST http://127.0.0.1:8080/vm/101/invoke \
+     -H "Content-Type: application/json" \
+     -d '{"length_of_message": 32, "num_of_iterations": 1000}'
+
+curl -X POST http://127.0.0.1:8080/vm/101/invoke \
+     -H "Content-Type: application/json" \
+     -d '{"name": "Firecracker"}'
