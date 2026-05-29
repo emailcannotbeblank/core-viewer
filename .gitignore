@@ -3,3 +3,8 @@ frontend/code-viewer/dist/
 backend/__pycache__/
 *.pyc
 .env
+backend/backend-go/
+backend/backend-kernel/
+backend/backend-rust/
+backend/backend-general/results
+异地开发/

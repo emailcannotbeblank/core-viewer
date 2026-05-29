@@ -1,11 +1,12 @@
 <script setup>
 import { ref } from 'vue'
-import TerminalOutput from './TerminalOutput.vue'
 import DurationOutput from './DurationOutput.vue'
 import CallStackOutput from './CallStackOutput.vue' 
+import ServerTerminal from './ServerTerminal.vue' // <--- 引入终端组件
 
 const currentTab = ref(1)
-const serverIp = ref('127.0.0.1:5000')
+const serverIp = ref('90.88.16.144:5000')
+const serverTerminalRef = ref(null) // <--- 引用终端子组件，用于调用清理方法
 
 const formData = ref({
   functionName: '',
@@ -29,7 +30,11 @@ const handleClear = () => {
   pathOutputLog.value = ''
   sourceCodeLog.value = ''
   latencyLog.value = ''
-  callStackLog.value = ''     
+  callStackLog.value = ''    
+  // 如果当前在终端 Tab，同时清空终端的记录
+  if (currentTab.value === 3 && serverTerminalRef.value) {
+    serverTerminalRef.value.clearTerminal()
+  }
 }
 
 const getBaseUrl = () => {
@@ -58,34 +63,25 @@ const handleAnalyze = async () => {
     }
 
     if (currentTab.value === 1) {
-      pathOutputLog.value = `[${startTime.toLocaleTimeString()}] 🚀 启动路径分析...\n--------------------------------------------------\n`
-      const response = await fetch(`${baseUrl}/api/analyze_stream`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder('utf-8')
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        pathOutputLog.value += decoder.decode(value, { stream: true })
-      }
-    } 
-    else if (currentTab.value === 2) {
       sourceCodeLog.value = ''
+      pathOutputLog.value = `[${startTime.toLocaleTimeString()}] 拉取源码...\n--------------------------------------------------\n`
       latencyLog.value = ''
-      const response = await fetch(`${baseUrl}/api/get_source`, {
+
+      const sourceResponse = await fetch(`${baseUrl}/api/get_source`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_func: payload.target_func })
       })
-      const resData = await response.json()
-      if (resData.success) {
-        sourceCodeLog.value = resData.output
+      const sourceData = await sourceResponse.json()
+      if (sourceData.success) {
+        sourceCodeLog.value = sourceData.output
+        pathOutputLog.value += `源码拉取完成。\n`
       } else {
-        sourceCodeLog.value = `获取源码失败:\n${resData.error || resData.output}`
+        sourceCodeLog.value = `获取源码失败:\n${sourceData.error || sourceData.output}`
+        pathOutputLog.value += `源码拉取失败:\n${sourceData.error || sourceData.output}\n`
+        return
       }
-    }
-    else if (currentTab.value === 3) {
+    } 
+    else if (currentTab.value === 2) {
       callStackLog.value = `[${startTime.toLocaleTimeString()}] 🚀 启动调用栈分类分析...\n--------------------------------------------------\n`
       const response = await fetch(`${baseUrl}/api/analyze_callstack_stream`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -102,8 +98,41 @@ const handleAnalyze = async () => {
   } catch (error) {
     const errMsg = `\n请求异常：${error.message}\n(请检查IP是否正确、服务是否启动)`
     if(currentTab.value===1) pathOutputLog.value += errMsg
-    else if(currentTab.value===2) sourceCodeLog.value = errMsg
     else callStackLog.value += errMsg
+  } finally {
+    isLoading.value = false
+  }
+}
+
+const handleRunHitAnalysis = async () => {
+  if (!formData.value.functionName) { alert('请输入函数名'); return; }
+  const baseUrl = getBaseUrl()
+  if (!baseUrl) { alert('请输入服务器 IP'); return; }
+  if (isLoading.value) return
+
+  isLoading.value = true
+  pathOutputLog.value = `[${new Date().toLocaleTimeString()}] 运行分析...\n--------------------------------------------------\n`
+  latencyLog.value = ''
+
+  try {
+    const payload = {
+      target_func: formData.value.functionName.trim(),
+      caller_funcs: formData.value.callStack.trim() || '*',
+      sleep_time: formData.value.sleepTime
+    }
+    const response = await fetch(`${baseUrl}/api/analyze_stream`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      pathOutputLog.value += decoder.decode(value, { stream: true })
+    }
+  } catch (error) {
+    pathOutputLog.value += `\n请求异常：${error.message}\n(请检查IP是否正确、服务是否启动)`
   } finally {
     isLoading.value = false
   }
@@ -112,8 +141,9 @@ const handleAnalyze = async () => {
 const handleRunLatency = async ({ startOffset, endOffset }) => {
   const baseUrl = getBaseUrl()
   if (!baseUrl) { alert('请输入服务器 IP'); return; }
+  if (!formData.value.functionName) { alert('请输入函数名'); return; }
   isLoading.value = true
-  latencyLog.value = `🚀 启动时延测试脚本...\n----------------------------------\n`
+  latencyLog.value = `\n[${new Date().toLocaleTimeString()}] 启动时延测试脚本...\n----------------------------------\n`
   
   try {
     const payload = {
@@ -147,8 +177,12 @@ const handleDrillDown = (newFuncName) => {
 }
 const handleRestore = (prevState) => {
   formData.value.functionName = prevState.func
-  if (currentTab.value === 1) pathOutputLog.value = prevState.log
-  else if (currentTab.value === 2) sourceCodeLog.value = prevState.code
+  if (currentTab.value === 1) {
+    sourceCodeLog.value = prevState.code || ''
+    pathOutputLog.value = prevState.hitLog || ''
+    latencyLog.value = prevState.latencyLog || ''
+  }
+  else if (currentTab.value === 2) callStackLog.value = prevState.log
   else callStackLog.value = prevState.log 
 }
 </script>
@@ -159,9 +193,9 @@ const handleRestore = (prevState) => {
       <div class="logo">🚀 Kernel Tools</div>
       
       <div class="nav-tabs">
-        <div class="nav-item" :class="{active: currentTab===1}" @click="selectTab(1)">📂 路径分析</div>
-        <div class="nav-item" :class="{active: currentTab===2}" @click="selectTab(2)">⏱️ 时长分析</div>
-        <div class="nav-item" :class="{active: currentTab===3}" @click="selectTab(3)">🧬 调用栈分析</div>
+        <div class="nav-item" :class="{active: currentTab===1}" @click="selectTab(1)">代码分析</div>
+        <div class="nav-item" :class="{active: currentTab===2}" @click="selectTab(2)">调用栈分析</div>
+        <div class="nav-item" :class="{active: currentTab===3}" @click="selectTab(3)">服务器交互</div>
       </div>
 
       <div class="sidebar-form">
@@ -189,33 +223,37 @@ const handleRestore = (prevState) => {
 
       <div class="sidebar-actions">
         <button class="btn-clear-side" @click="handleClear">清空</button>
-        <button class="btn-run-side" @click="handleAnalyze" :disabled="isLoading">
-          {{ isLoading ? '⏳ 执行中' : '⚡ 拉取信息' }}
+        <button v-show="currentTab !== 3" class="btn-run-side" @click="handleAnalyze" :disabled="isLoading">
+          {{ isLoading ? '执行中' : (currentTab === 1 ? '拉取代码' : '运行分析') }}
         </button>
       </div>
     </aside>
 
     <main class="workspace">
-      <TerminalOutput 
-        v-show="currentTab === 1"  :log="pathOutputLog" 
-        :current-func="formData.functionName"
-        @drill-down="handleDrillDown"
-        @restore="handleRestore"
-      />
       <DurationOutput
-        v-show="currentTab === 2"  :source-code="sourceCodeLog"
+        v-show="currentTab === 1"
+        :source-code="sourceCodeLog"
+        :hit-log="pathOutputLog"
         :latency-log="latencyLog"
         :current-func="formData.functionName"
         :is-analyzing="isLoading"
         @drill-down="handleDrillDown"
         @restore="handleRestore"
+        @run-analysis="handleRunHitAnalysis"
         @run-latency="handleRunLatency"
       />
       <CallStackOutput
-        v-show="currentTab === 3"  :log="callStackLog"
+        v-show="currentTab === 2"  :log="callStackLog"
         :current-func="formData.functionName"
         @drill-down="handleDrillDown"
         @restore="handleRestore"
+      />
+      
+      <ServerTerminal 
+        v-show="currentTab === 3" 
+        ref="serverTerminalRef"
+        :server-ip="serverIp" 
+        :is-active="currentTab === 3"
       />
     </main>
   </div>
@@ -285,5 +323,4 @@ html, body, #app { margin: 0 !important; padding: 0 !important; width: 100vw !im
 .workspace { 
   flex: 1; display: flex; flex-direction: column; position: relative; background: #0f172a; width: 0; 
 }
-/* 注意：由于 TerminalOutput 等子组件自带 flex: 8 的设定，并且内部使用了深色背景，这里它们会自动铺满右侧空间 */
 </style>

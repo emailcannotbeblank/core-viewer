@@ -1,0 +1,8 @@
+{
+    "binary_path": "/home/zry/桌面/virt/firecracker/firecracker1/build/cargo_target/x86_64-unknown-linux-musl/debug/firecracker",
+    "source_dir": "/home/zry/桌面/virt/firecracker/firecracker1",
+    "project_name": "firecracker-debug",
+    "settings": {
+        "use_sudo": false
+    }
+}
