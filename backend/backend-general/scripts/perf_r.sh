@@ -1,5 +1,5 @@
 #!/bin/bash
-PERF_PROBE_CMD="perf probe -x '/home/zry/桌面/e2b/ip/iproute2/ip/ip' -s '/home/zry/桌面/e2b/ip/iproute2'"
+PERF_PROBE_CMD="perf probe -x '/home/zry/桌面/virt/firecracker/firecracker/build/cargo_target/debug/firecracker' -s '/home/zry/桌面/virt/firecracker/firecracker'"
 
 set -euo pipefail
 

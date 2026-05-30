@@ -1,0 +1,10 @@
+{
+    "target_type": "user",
+    "binary_path": "/home/zry/桌面/e2b/ip/iproute2/ip/ip",
+    "source_dir": "/home/zry/桌面/e2b/ip/iproute2",
+    "project_name": "general-probe",
+    "settings": {
+        "use_sudo": true,
+        "call_graph": "fp"
+    }
+}

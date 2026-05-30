@@ -27,6 +27,7 @@ LATENCY_SCRIPT_PATH = os.path.join(BASE_DIR, 'scripts/perf_r.sh')
 CALLSTACK_SCRIPT_PATH = os.path.join(BASE_DIR, 'scripts/perf_c.sh')
 SOURCE_SCRIPT_PATH = os.path.join(BASE_DIR, 'scripts/perf_l.sh')
 CONFIGURE_SCRIPT_PATH = os.path.join(BASE_DIR, 'scripts/configure_perf.sh')
+RESOLVE_SYMBOL_SCRIPT_PATH = os.path.join(BASE_DIR, 'scripts/resolve_symbol.sh')
 
 def strip_ansi(text):
     if not text:
@@ -60,6 +61,23 @@ def build_probe_point(target_func, offset):
         return f"{target_func}{offset}"
     return f"{target_func}:{offset}"
 
+def resolve_symbol_name(target_func):
+    if not os.path.exists(RESOLVE_SYMBOL_SCRIPT_PATH):
+        raise RuntimeError(f"找不到符号解析脚本: {RESOLVE_SYMBOL_SCRIPT_PATH}")
+    result = subprocess.run(
+        [RESOLVE_SYMBOL_SCRIPT_PATH, str(target_func)],
+        capture_output=True,
+        text=True,
+        check=False
+    )
+    if result.returncode != 0:
+        error = strip_ansi(result.stderr or result.stdout).strip()
+        raise RuntimeError(error or f"符号解析失败: {target_func}")
+    resolved = strip_ansi(result.stdout).strip().splitlines()
+    if not resolved:
+        raise RuntimeError(f"符号解析无输出: {target_func}")
+    return resolved[-1].strip()
+
 trigger_event = threading.Event()
 trigger_done_event = threading.Event()
 trigger_task = {"armed": False, "cmd": "", "delay": 0, "output": ""}
@@ -77,6 +95,10 @@ def run_trace_stream():
 
     if not target_func:
         return jsonify({"success": False, "error": "缺少目标函数名"}), 400
+    try:
+        resolved_func = resolve_symbol_name(target_func)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
     current_script = SCRIPT_PATH_STAT
 
@@ -87,8 +109,10 @@ def run_trace_stream():
         try:
             # ================= 阶段一：Setup (打探针) =================
             # 无论是哪个脚本，setup 的传参方式都是一致的
-            setup_cmd = ['sudo', current_script, 'setup', str(target_func)]
+            setup_cmd = ['sudo', current_script, 'setup', str(resolved_func)]
             yield "正在使用 [perf_e] 模式分析执行次数...\n"
+            if resolved_func != target_func:
+                yield f"符号解析: {target_func} -> {resolved_func}\n"
             print("执行:", " ".join(setup_cmd))
             process1 = subprocess.Popen(setup_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
             for line in iter(process1.stdout.readline, ''):
@@ -131,7 +155,7 @@ def run_trace_stream():
                 trigger_task['armed'] = False
 
             # ================= 阶段三：Stat (录制与分析) =================
-            record_cmd = ['sudo', current_script, 'stat', str(target_func), str(sleep_time)]
+            record_cmd = ['sudo', current_script, 'stat', str(resolved_func), str(sleep_time)]
             if callstack_filter:
                 record_cmd.append(str(callstack_filter))
             yield f"\n开始执行分析命令: {' '.join(record_cmd)}\n"
@@ -154,8 +178,9 @@ def get_source():
     if not target_func:
         return jsonify({"success": False, "error": "缺少目标函数名"}), 400
     try:
+        resolved_func = resolve_symbol_name(target_func)
         # 修改为调用 perf_l.sh
-        cmd = ['sudo', SOURCE_SCRIPT_PATH, str(target_func)]
+        cmd = ['sudo', SOURCE_SCRIPT_PATH, str(resolved_func)]
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         clean_output = format_backend_output(result.stdout, 'source')
         clean_error = format_backend_output(result.stderr, 'log')
@@ -178,8 +203,15 @@ def run_latency_stream():
     sleep_time = data.get('sleep_time', 5)
     callstack_filter = data.get('callstack_filter') or data.get('caller_funcs') or ''
 
-    probe1 = build_probe_point(target_func, start_offset)
-    probe2 = build_probe_point(target_func, end_offset)
+    if not target_func:
+        return jsonify({"success": False, "error": "缺少目标函数名"}), 400
+    try:
+        resolved_func = resolve_symbol_name(target_func)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+    probe1 = build_probe_point(resolved_func, start_offset)
+    probe2 = build_probe_point(resolved_func, end_offset)
     
     def generate():
         try:
@@ -187,6 +219,8 @@ def run_latency_stream():
             setup_cmd = ['sudo', LATENCY_SCRIPT_PATH, 'setup', probe1, probe2]
             cmd_print = " ".join(setup_cmd)
             print(f"[RUN CMD] {cmd_print}")
+            if resolved_func != target_func:
+                yield f"符号解析: {target_func} -> {resolved_func}\n"
             process1 = subprocess.Popen(setup_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             for line in iter(process1.stdout.readline, ''):
                 yield format_backend_output(line, 'log')
@@ -255,9 +289,17 @@ def run_callstack_stream():
     target_func = data.get('target_func')
     caller_funcs = data.get('caller_funcs', '*')
     sleep_time = data.get('sleep_time', 5)
-    cmd = ['sudo', CALLSTACK_SCRIPT_PATH, target_func, str(sleep_time), str(caller_funcs)]
+    if not target_func:
+        return jsonify({"success": False, "error": "缺少目标函数名"}), 400
+    try:
+        resolved_func = resolve_symbol_name(target_func)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    cmd = ['sudo', CALLSTACK_SCRIPT_PATH, resolved_func, str(sleep_time), str(caller_funcs)]
     def generate():
         try:
+            if resolved_func != target_func:
+                yield f"符号解析: {target_func} -> {resolved_func}\n"
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, universal_newlines=True)
             for line in iter(process.stdout.readline, ''):
                 yield format_backend_output(line, 'log')
