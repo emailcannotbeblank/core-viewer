@@ -26,6 +26,14 @@ if [ "$#" -lt 3 ]; then
     exit 1
 fi
 
+short_id() {
+    if command -v sha1sum >/dev/null 2>&1; then
+        printf "%s" "$1" | sha1sum | awk '{print substr($1, 1, 12)}'
+    else
+        printf "%s" "$1" | cksum | awk '{print $1}'
+    fi
+}
+
 MODE="$1"
 DEF_START="$2"
 DEF_END="$3"
@@ -40,10 +48,11 @@ normalize_probe_point() {
 
 ACTUAL_START="$(normalize_probe_point "$DEF_START")"
 ACTUAL_END="$(normalize_probe_point "$DEF_END")"
-START_NAME="start_$(echo "$ACTUAL_START" | sed 's/[^a-zA-Z0-9]/_/g')"
-END_NAME="end_$(echo "$ACTUAL_END" | sed 's/[^a-zA-Z0-9]/_/g')"
+RUN_ID="$(short_id "${ACTUAL_START}_${ACTUAL_END}")"
+START_NAME="s_${RUN_ID}"
+END_NAME="e_${RUN_ID}"
 GROUP_NAME="general_r"
-RUN_NAME="$(echo "${ACTUAL_START}_${ACTUAL_END}" | sed 's/[^a-zA-Z0-9]/_/g')"
+RUN_NAME="r_${RUN_ID}"
 RESULTS_DIR="$BASE_DIR/results"
 OUT_DIR="$RESULTS_DIR/perf_latency_${RUN_NAME}"
 mkdir -p "$OUT_DIR"

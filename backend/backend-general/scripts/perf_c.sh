@@ -23,14 +23,24 @@ if [ "$#" -lt 1 ]; then
     exit 1
 fi
 
+short_id() {
+    if command -v sha1sum >/dev/null 2>&1; then
+        printf "%s" "$1" | sha1sum | awk '{print substr($1, 1, 12)}'
+    else
+        printf "%s" "$1" | cksum | awk '{print $1}'
+    fi
+}
+
 TARGET_FUNC="$1"
 SLEEP_TIME="${2:-5}"
 CALLSTACK_FILTER="${3:-*}"
 SAFE_FUNC="$(echo "$TARGET_FUNC" | sed 's/[^a-zA-Z0-9]/_/g')"
+FUNC_ID="$(short_id "$TARGET_FUNC")"
+SAFE_LABEL="$(printf "%s" "$SAFE_FUNC" | cut -c1-48)_${FUNC_ID}"
 GROUP_NAME="general_c"
-EVENT_NAME="call_${SAFE_FUNC}"
+EVENT_NAME="c_${FUNC_ID}"
 RESULTS_DIR="$BASE_DIR/results"
-OUT_DIR="$RESULTS_DIR/callstacks_${SAFE_FUNC}"
+OUT_DIR="$RESULTS_DIR/callstacks_${SAFE_LABEL}"
 RECORD_FILE="$OUT_DIR/perf_record.data"
 SCRIPT_FILE="$OUT_DIR/perf_script.txt"
 mkdir -p "$OUT_DIR"

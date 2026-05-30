@@ -7,6 +7,7 @@ backend/backend-go/
 backend/backend-kernel/
 backend/backend-rust/
 backend/backend-general/results
+backend/backend-general/scripts/hiddens
 异地开发/
 0319-home.txt
 对话.txt

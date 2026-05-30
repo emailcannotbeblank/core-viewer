@@ -21,12 +21,22 @@ if [ "$#" -lt 2 ]; then
     exit 1
 fi
 
+short_id() {
+    if command -v sha1sum >/dev/null 2>&1; then
+        printf "%s" "$1" | sha1sum | awk '{print substr($1, 1, 12)}'
+    else
+        printf "%s" "$1" | cksum | awk '{print $1}'
+    fi
+}
+
 MODE="$1"
 TARGET_FUNC="$2"
 SAFE_FUNC="$(echo "$TARGET_FUNC" | sed 's/[^a-zA-Z0-9]/_/g')"
+FUNC_ID="$(short_id "$TARGET_FUNC")"
+SAFE_LABEL="$(printf "%s" "$SAFE_FUNC" | cut -c1-48)_${FUNC_ID}"
 GROUP_NAME="general_e"
 RESULTS_DIR="$BASE_DIR/results"
-OUT_DIR="$RESULTS_DIR/perf_results_${SAFE_FUNC}"
+OUT_DIR="$RESULTS_DIR/perf_results_${SAFE_LABEL}"
 LINES_FILE="$OUT_DIR/perf_lines.txt"
 EVENTS_MAP_FILE="$OUT_DIR/events_map.txt"
 STAT_FILE="$OUT_DIR/perf_stat.txt"
@@ -183,7 +193,7 @@ if [ "$MODE" = "setup" ]; then
     VALID_PROBES=0
 
     for offset in $OFFSETS; do
-        probe_name="line_${SAFE_FUNC}_${offset}"
+        probe_name="l_${FUNC_ID}_${offset}"
         probe_def="${GROUP_NAME}:${probe_name}=${TARGET_FUNC}:${offset}"
         output="$(run_perf_probe_capture -a "$probe_def" || true)"
         exact_event="$(printf "%s\n" "$output" | awk -v name="$probe_name" '

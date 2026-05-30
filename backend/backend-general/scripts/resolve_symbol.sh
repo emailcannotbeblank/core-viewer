@@ -18,11 +18,6 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! command -v nm >/dev/null 2>&1; then
-    echo "错误: 未找到 nm 命令" >&2
-    exit 1
-fi
-
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "错误: 找不到配置文件 $CONFIG_FILE" >&2
     exit 1
@@ -41,72 +36,14 @@ if [ ! -f "$BINARY_PATH" ]; then
     exit 1
 fi
 
-RAW_SYMBOLS="$(mktemp)"
-DEMANGLED_SYMBOLS="$(mktemp)"
-MATCHES="$(mktemp)"
-trap 'rm -f "$RAW_SYMBOLS" "$DEMANGLED_SYMBOLS" "$MATCHES"' EXIT
-
-nm -a --format=posix "$BINARY_PATH" > "$RAW_SYMBOLS"
-nm -aC --format=posix "$BINARY_PATH" > "$DEMANGLED_SYMBOLS"
-
-paste "$RAW_SYMBOLS" "$DEMANGLED_SYMBOLS" | awk -F '\t' -v query="$QUERY" '
-function parse_demangled(line, fields, n, i, name) {
-    n = split(line, fields, /[[:space:]]+/)
-    if (n < 4) {
-        return ""
-    }
-    name = fields[1]
-    for (i = 2; i <= n - 3; i++) {
-        name = name " " fields[i]
-    }
-    return name
-}
-
-function last_component(name, parts, n) {
-    n = split(name, parts, "::")
-    return parts[n]
-}
-
-function emit(raw_name, demangled_name, score) {
-    print score "\t" raw_name "\t" demangled_name
-}
-
-{
-    split($1, raw_fields, /[[:space:]]+/)
-    raw_name = raw_fields[1]
-    raw_type = raw_fields[2]
-    if (raw_name == "" || raw_type !~ /^[tTwW]$/) {
-        next
-    }
-
-    demangled_name = parse_demangled($2)
-    if (demangled_name == "") {
-        next
-    }
-
-    if (raw_name == query) {
-        emit(raw_name, demangled_name, 0)
-    } else if (demangled_name == query) {
-        emit(raw_name, demangled_name, 1)
-    } else if (last_component(demangled_name) == query) {
-        emit(raw_name, demangled_name, 2)
-    }
-}
-' > "$MATCHES"
-
-if [ ! -s "$MATCHES" ]; then
-    echo "错误: 未在 $BINARY_PATH 中找到函数符号: $QUERY" >&2
-    exit 2
+FIND_FUNC_SCRIPT="$(jq -r '.symbol_resolution.find_func_script // .go.find_func_script // .rust.find_func_script // "find_func.py"' "$CONFIG_FILE")"
+if [[ "$FIND_FUNC_SCRIPT" != /* ]]; then
+    FIND_FUNC_SCRIPT="$BASE_DIR/$FIND_FUNC_SCRIPT"
 fi
 
-BEST_SCORE="$(awk -F '\t' 'NR == 1 || $1 < best { best = $1 } END { print best }' "$MATCHES")"
-BEST_MATCHES="$(awk -F '\t' -v score="$BEST_SCORE" '$1 == score' "$MATCHES")"
-BEST_COUNT="$(printf "%s\n" "$BEST_MATCHES" | sed '/^[[:space:]]*$/d' | wc -l)"
-
-if [ "$BEST_COUNT" -gt 1 ]; then
-    echo "错误: 函数名存在多个匹配，请输入更完整的名称:" >&2
-    printf "%s\n" "$BEST_MATCHES" | awk -F '\t' '{ print "  " $3 " -> " $2 }' >&2
-    exit 3
+if [ ! -f "$FIND_FUNC_SCRIPT" ]; then
+    echo "错误: 找不到函数符号解析脚本: $FIND_FUNC_SCRIPT" >&2
+    exit 1
 fi
 
-printf "%s\n" "$BEST_MATCHES" | awk -F '\t' '{ print $2 }'
+python3 "$FIND_FUNC_SCRIPT" -c "$CONFIG_FILE" -f "$QUERY"

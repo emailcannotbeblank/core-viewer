@@ -6,5 +6,13 @@
     "settings": {
         "use_sudo": true,
         "call_graph": "fp"
-    }
+    },
+    "symbol_resolution": {
+        "find_func_script": "find_func.py",
+        "default_hints": ["src/firecracker"],
+        "func_hints": {
+            "new": ["src/vmm/src/device_manager/mmio.rs"],
+            "process_virtio_queues": ["virtio/mem/device"]
+        }
+  }
 }
